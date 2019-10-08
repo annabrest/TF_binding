@@ -1,11 +1,11 @@
 .Rproj.user
 .Rhistory
 .RData
+.RData?
 .Ruserdata
 
-*.RData
-.RData?
-/Data/*
+Data
+data
 
 # Compiled source #
 ###################

@@ -1,0 +1,53 @@
+---
+title: "TF_binding_targets"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+```
+Investigate why 1/4 of Varoiable genes was filtered out form the promoters list
+too short?
+genes too close together?
+
+```{r}
+all_results_scan <- read_csv("analysed_data/TF_scan_results_v1.csv")
+Variable_genes <- read_csv("/Users/abrestovitsky/Work/2019/Analysis/Arabidopsis/Expression/analysed_data/list_Variable_genes.csv")
+DNA_binding_proteins <- read_csv("/Users/abrestovitsky/Work/2019/Analysis/Arabidopsis/Expression/analysed_data/DNA_binding_proteins.csv")
+colnames(Variable_genes) <- "ID"
+colnames(DNA_binding_proteins) <- "ID"
+colnames(all_results_scan)[2] <- "ID"
+head(all_results_scan)
+distinct(as.data.frame(semi_join(all_results_scan, Variable_genes, by = "ID")$ID))
+semi_join(all_results_scan, Variable_genes, by = "ID")
+semi_join(Variable_genes, all_results_scan, by = "ID")
+inner_join(all_results_scan, Variable_genes, by = "ID")
+distinct(as.data.frame(all_results_scan$ID))
+
+a <- letters[1:5]
+b <- c(rep(a, 2), letters[3:5])
+a
+b
+match(b, a)
+length(base::match(Variable_genes$ID, all_results_scan$ID))
+table(is.na(base::match(Variable_genes$ID, all_results_scan$ID)))
+```
+
+DNA_binding genes lost only 10% from the promoters_list
+```{r}
+names(Promoters_updated)
+table(is.na(base::match(Variable_genes$ID, names(Promoters_updated))))
+# FALSE  TRUE 
+#  3291   827 
+#827/3291 =  0.2512914
+table(is.na(base::match(DNA_binding_proteins$ID, names(Promoters_updated))))
+# FALSE  TRUE 
+#  2460   283 
+# 283/2460 = 0.1150407
+```
+

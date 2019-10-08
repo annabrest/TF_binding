@@ -1,0 +1,170 @@
+---
+title: "Identification of TF binding sites in Brassica Rapa based on PWM from Arabidopsis, using Biocondauctor/universalmotif"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(TFBSTools)
+library(universalmotif)
+library(rtracklayer)
+library(Biostrings)
+library(tidyverse)
+```
+
+## Prepare DNAStringSet object from ~/Work/2019/Analysis/Promoters/BRapa/Brapa_promoters1500.fa for subsiquent analysis
+Use tab.fa file to preprocess promoter DNAStringSet (sequences.fa file) for the following analysis
+promoters1500_tab.fa and promoters1500.fa, contain the same info, different format
+
+##modify promoters1500_tab.fa to prepare GenomiRanges object, in order to change the names of promoters1500.fa to be the gene name
+change names(DNAStringSET) to include relevant gene names
+
+```{r eval=FALSE}
+Brapa_promoters1500_txt <- tbl_df(read.delim("~/Work/2019/Analysis/Promoters/BRapa/Brapa_promoters1500_tab.fa", header=FALSE, stringsAsFactors=FALSE))
+Brapa_promoters1500_annotation <- import.gff3("~/Work/2019/Analysis/Promoters/BRapa/promoters_1500.gff3")
+
+Brapa_promoters1500 <- readDNAStringSet("~/Work/2019/Analysis/Promoters/BRapa/Brapa_promoters1500.fa")
+
+# modify promoters1500.bed to prepare GenomiRanges object
+Brapa_promoters1500_txt <- Brapa_promoters1500_txt %>%
+  mutate(
+    names = V1,
+    V1 = str_replace_all(V1, ":", "_"),
+    V1 = str_replace_all(V1, "\\(|\\)", ""),
+    strand = str_extract(V1, "\\+$|\\-$"),
+    V1 = str_replace_all(V1, "\\+$|\\-$", "")
+  ) %>%
+  separate(V1, into = c("seqnames", "start", "end")) %>% 
+  mutate(start = as.numeric(start) + 1)
+
+names(Brapa_promoters1500_txt)[4] <- "sequence"
+dim(Brapa_promoters1500_txt)
+#[1] 38688     6
+
+Brapa_promoters1500_txt_GR <-
+  makeGRangesFromDataFrame(as.data.frame(Brapa_promoters1500_txt),
+                           keep.extra.columns = TRUE)
+
+
+#------use overlap between promoters1500_txt_GR and promoters_1500.gff3 to match betwee them
+#findOverlaps(query, subject)
+
+#GenomicRanges::findOverlaps(Brapa_promoters1500_annotation, Brapa_promoters1500_txt_GR) 
+Brapa_promoters1500_txt_GR <- Brapa_promoters1500_txt_GR[subjectHits(GenomicRanges::findOverlaps(Brapa_promoters1500_annotation, Brapa_promoters1500_txt_GR)),]
+
+#----add ID column from promoters1500_annotation to promoters1500_txt_GR with gene name
+mcols(Brapa_promoters1500_txt_GR)$ID <-str_replace(mcols(Brapa_promoters1500_annotation)$ID, "promoter:", "")
+
+#Change names in DNAStringSet obgect to be gene names
+Brapa_promoters1500 <- Brapa_promoters1500[match(names(Brapa_promoters1500), mcols(Brapa_promoters1500_txt_GR)$names),]
+names(Brapa_promoters1500) <- mcols(Brapa_promoters1500_txt_GR)$ID
+
+```
+
+Use "Brapa_promoters1500" for folowing analysis, to predict TF binding sites.
+
+```{r eval=FALSE}
+#create list of files
+meme_files <- list.files("~/Work/2019/Analysis/TF_binding/motifs" ,pattern=".txt$", full.names = T, recursive=TRUE)
+#upload into r
+all_meme_data <- lapply(meme_files, function(x) read_meme(x))
+
+all_results_scan <- data.frame()
+for (i in 1:length(all_meme_data)) {
+  
+all_results_scan <- rbind(all_results_scan, scan_sequences(all_meme_data[i], Brapa_promoters1500, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds"))
+}
+
+head(all_results_scan)
+tail(all_results_scan)
+
+all_results_scan %>%  mutate(TF_family = motif) %>% mutate(TF = str_remove(motif, "\\..*$"))
+
+all_results_scan_TF_family <- all_results_scan %>%  mutate(TF_family = str_remove(motif, "\\..*$"))
+
+getwd()
+dir.create("analysed_data")
+write_csv(all_results_scan, "analysed_data/TF_scan_results_Brapa_promoters1500.csv" )
+write_csv(all_results_scan_TF_family, "analysed_data/TF_scan_results_Brapa_promoters1500_TF_family.csv" )
+
+```
+
+
+
+#Analysis of TF binding sites
+
+##1. Calculate the total number of all binding sites per TF or TF_family on each promoter and their sum
+
+```{r eval=FALSE}
+Summary_scores_TF_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>% 
+  group_by(sequence, motif) %>%
+  summarise(
+    N = n(),
+    sum_score_promoter = sum(score),
+    min_score_promoter = min(score),
+    max_score_promoter = max(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_scores_TF_per_promoter)
+#[1] 3888171       7
+
+Summary_scores_TF_family_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>%
+  group_by(sequence, TF_family) %>%
+  summarise(
+    N = n(),
+    sum_score_promoter = sum(score),
+    min_score_promoter = min(score),
+    max_score_promoter = max(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_scores_TF_family_per_promoter)
+#[1] 955026       7
+```
+
+
+##2. Select the strongest binding site per promoter:
+    1. Filter “score” == max.score, based on "score.pct" > 99% (score.pct = score/max.score)
+        1. Calculate their num/promoter
+        2. Calculate their sum/promoter
+
+```{r eval=FALSE}
+Summary_max_score_TF_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>%
+  filter(score.pct > 99) %>%
+  group_by(sequence, motif) %>%
+  summarise(
+    N = n(),
+    sum_TF_max_score_promoter = sum(score),#add mean!
+    TF_max_score_adj = mean(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_max_score_TF_per_promoter)
+#[1] 267566      6
+
+Summary_max_score_TF_family_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>% 
+  filter(score.pct > 99) %>%
+  group_by(sequence, TF_family) %>%
+  summarise(
+    N = n(),
+    sum_TF_max_score_promoter = sum(score),#add mean!
+    TF_max_score_adj = mean(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_max_score_TF_family_per_promoter)
+# [1] 226479      6
+```
+
+```{r eval=FALSE}
+write_csv(Summary_scores_TF_per_promoter, "analysed_data/Summary_scores_TF_per_promoter1500.csv" )
+write_csv(Summary_max_score_TF_per_promoter, "analysed_data/Summary_max_score_TF_per_promoter1500.csv" )
+write_csv(Summary_scores_TF_family_per_promoter, "analysed_data/Summary_scores_TF_family_per_promoter1500.csv" )
+write_csv(Summary_max_score_TF_family_per_promoter, "analysed_data/Summary_max_score_TF_family_per_promoter1500.csv" )
+```
+
+

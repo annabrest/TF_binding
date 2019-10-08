@@ -1,0 +1,223 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(TFBSTools)
+library(universalmotif)
+library(rtracklayer)
+library(Biostrings)
+```
+
+universalmotif search for motifs
+```{r}
+Promoters <- readDNAStringSet("promoters1500.fa")
+meme_ex <- read_meme("meme_m1.txt")
+meme_TFBSTool <- convert_motifs(meme_ex, "TFBSTools-PWMatrix")
+
+res <- scan_sequences(meme_ex, Promoters, verbose = 0, progress = FALSE, threshold = 0.6, threshold.type = "logodds")
+head(res)
+tail(res)
+
+```
+
+TFBSTool search for motifs
+```{r}
+meme_ex_1 <- read_meme("meme_m1.txt")
+meme_ex_2 <- read_meme("meme_m1_2.txt")
+
+meme_TFBSTool_1 <- convert_motifs(meme_ex_1, "TFBSTools-PWMatrix")
+meme_TFBSTool_2 <- convert_motifs(meme_ex_2, "TFBSTools-PWMatrix")
+
+pwmList <- PWMatrixList(meme_TFBSTool_1, meme_TFBSTool_2,use.names=TRUE)
+
+subject <- Promoters[1]
+
+siteset <- searchSeq(meme_TFBSTool_1, subject, seqname="seq1", min.score="60%", strand="*")
+
+sitesetList <- searchSeq(pwmList, subject, seqname="seq1", min.score="60%", strand="*")
+
+head(writeGFF3(siteset))
+head(writeGFF3(sitesetList))
+
+##-------- get the relative scores
+relScore(siteset)
+# [1] 0.6853093 0.6509141 0.6149503 0.6123128 0.6175198
+relScore(sitesetList)
+#$`1:2130-3630(+)`
+# [1] 0.6853093 0.6509141 0.6149503 0.6123128
+#> 
+#$`1:2130-3630(+)`
+#  [1] 0.6658215 0.6070995 0.6616399 0.6138166 0.665821
+
+## --------- calculate the empirical p-values of the scores
+pvalues(siteset, type="TFMPvalue")
+#> [1] 0.02734375 0.02734375 0.04638672 0.04052734 0.04638672 0.04052734
+pvalues(siteset, type="sampling")
+```
+
+universalmotif search for motifs - automation
+```{r}
+#create a list of files
+meme_files <- list.files(pattern=".txt$", full.names = T, recursive=TRUE)
+#upload into r
+all_meme_data <- lapply(meme_files, function(x) read_meme(x))
+
+Exemple_meme <- lapply(meme_files[1:4], function(x) read_meme(x))
+
+res_test <- scan_sequences(lapply(meme_files[1], function(x) read_meme(x)), Promoters, verbose = 0, progress = FALSE, threshold = 0.6, threshold.type = "logodds")
+head(res)
+
+
+results_scan <- data.frame()
+for (i in 1:length(Exemple_meme)) {
+  
+  results_scan <- rbind(results_scan, scan_sequences(Exemple_meme[i], Promoters, verbose = 0, progress = FALSE, threshold = 0.6, threshold.type = "logodds"))
+}
+head(results_scan)
+
+results_scan_pval <- data.frame()
+for (i in 1:length(Exemple_meme)) {
+  
+  results_scan_pval <- rbind(results_scan_pval, scan_sequences(Exemple_meme[i], Promoters, verbose = 0, progress = FALSE, threshold = 0.6, threshold.type = "pvalue"))
+}
+head(results_scan_pval)
+
+```
+
+
+readDNAStringSet("promoters1500.fa")
+  A DNAStringSet instance of length 22967
+        width seq                          names               
+    [1]  1500 AACATTTCAAACC...CTTCCTCCCTCC 1:2130-3630(+)
+    [2]  1500 TGTCCACAATAAG...CAGAAGAGAGAG 1:21645-23145(+)
+    [3]  1500 GTTAAGAATATAT...AGCAATTAGAAT 1:43176-44676(+)
+
+meme_ex
+
+       Motif name:   ABI3VP1_tnt.AT5G18090_col_a_m1
+         Alphabet:   DNA
+             Type:   PPM
+          Strands:   +-
+         Total IC:   12.52622
+        Consensus:   NNNGATGAANNNNND
+     Target sites:   147
+          E-value:   2.1e-117
+
+     N    N    N G A T    G A A    N    N    N    N    N    D
+A 0.24 0.41 0.31 0 1 0 0.00 1 1 0.29 0.39 0.38 0.34 0.44 0.27
+C 0.16 0.15 0.18 0 0 0 0.01 0 0 0.12 0.26 0.19 0.16 0.14 0.10
+G 0.40 0.24 0.13 1 0 0 0.99 0 0 0.36 0.18 0.20 0.28 0.21 0.33
+T 0.19 0.20 0.38 0 0 1 0.00 0 0 0.22 0.17 0.22 0.22 0.21 0.31
+
+############
+
+meme_TFBSTool
+An object of class PWMatrix
+ID: 
+Name: ABI3VP1_tnt.AT5G18090_col_a_m1
+Matrix Class: Unknown
+strand: *
+Pseudocounts: 0.8
+Tags: 
+list()
+Background: 
+  A   C   G   T 
+0.3 0.2 0.2 0.3 
+Matrix: 
+           N          N           N         G         A
+A -0.2910258  0.4658655  0.06053263 -7.529431  1.731489
+C -0.2910258 -0.4156884 -0.17628373 -7.529431 -7.529431
+G  1.0009758  0.2502888 -0.62554871  2.315667 -7.529431
+T -0.6508687 -0.6006655  0.34298782 -7.529431 -7.529431
+          T         G         A         A           N
+A -7.529431 -7.529431  1.731489  1.731489 -0.03624225
+C -7.529431 -4.671450 -7.529431 -7.529431 -0.70288207
+G -7.529431  2.305830 -7.529431 -7.529431  0.84669484
+T  1.731489 -7.529431 -7.529431 -7.529431 -0.41568839
+           N           N          N           N           D
+A  0.3934016  0.34298782  0.1802277  0.53486312 -0.17628373
+C  0.3684149 -0.06999894 -0.2910258 -0.48230664 -0.96337652
+G -0.1762837  0.02899016  0.4775967  0.07604896  0.70418912
+T -0.8128969 -0.41568839 -0.4597570 -0.50521432  0.02899016
+
+
+Format promotor.fa file, to include gene names
+# Change promotor.fa to promoter.fa
+```{r}
+library(rtracklayer)
+features <- import.gff3("promoters_1500.gff3")
+
+# promoters1500.bed and promoters1500.fa, contain the same info, different format
+# modify promoters1500.bed to prepare GenomiRanges object
+# change names(DNAStringSET) to include relevant gene names
+promoters1500_txt <- read.delim("~/Work/2019/Analysis/TF_binding/promoters1500.bed", header=FALSE, stringsAsFactors=FALSE)
+
+library(tidyverse)
+
+promoters1500_txt <- tbl_df(promoters1500_txt)
+
+promoters1500_txt <- promoters1500_txt %>% 
+mutate(names = V1, V1 = str_replace_all(V1, ":", "_"), 
+       V1 = str_replace_all(V1, "\\(|\\)", ""), 
+       strand = str_extract(V1, "\\+$|\\-$"),
+       V1 = str_replace_all(V1, "\\+$|\\-$", "")) %>% 
+separate(V1, into = c("seqnames", "start", "end"))
+
+tail(promoters1500_txt)
+dim(promoters1500_txt)
+names(promoters1500_txt)[4] <- "sequence"
+
+promoters1500_txt_GR <- makeGRangesFromDataFrame(as.data.frame(promoters1500_txt),
+                        keep.extra.columns= TRUE)
+
+
+#------find overlap between promoters1500_txt_GR and promoters_1500.gff3.]
+#findOverlaps(query, subject)
+Overlap_fa_gff3 <- GenomicRanges::findOverlaps(promoters1500_txt_GR, features)
+
+features_updates <- features[subjectHits(Overlap_fa_gff3),]
+mcols(promoters1500_txt_GR)$ID <-mcols(features_updates)$ID 
+#----add ID column from features to promoters1500_txt_GR
+#----add sequensing to features
+
+#####################
+#--------Check why promoters promoters1500_txt_GR and features have different coordinates
+all(mcols(promoters1500_txt_GR)$ID) == mcols(features_updates)$ID
+features[match(start(promoters1500_txt_GR)+1, start(features)),]
+#####################
+start(promoters1500_txt_GR)[1:5]+1
+start(features_updates)[1:5]
+```
+
+```{r}
+Promoters_updated <- Promoters[match(names(Promoters), mcols(promoters1500_txt_GR)$names),]
+
+names(Promoters_updated) <- str_replace(mcols(promoters1500_txt_GR)$ID, "promoter:", "")
+names(Promoters_updated)
+
+```
+
+```{r}
+#create list of files
+meme_files <- list.files(pattern=".txt$", full.names = T, recursive=TRUE)
+#upload into r
+all_meme_data <- lapply(meme_files, function(x) read_meme(x))
+
+all_results_scan <- data.frame()
+for (i in 1:length(all_meme_data)) {
+  
+all_results_scan <- rbind(all_results_scan, scan_sequences(all_meme_data[i], Promoters_updated, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds"))
+}
+head(all_results_scan)
+tail(all_results_scan)
+dir.create("analysed_data")
+write_csv(all_results_scan, "analysed_data/TF_scan_results_v1.csv" )
+```
+
+
