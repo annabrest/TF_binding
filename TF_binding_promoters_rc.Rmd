@@ -1,0 +1,790 @@
+---
+title: "Identification of TF binding sites based on PWM, using Biocondauctor/universalmotif"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(TFBSTools)
+library(universalmotif)
+library(rtracklayer)
+library(Biostrings)
+library(tidyverse)
+library(GenomicRanges)
+```
+
+
+
+Use "promoters1500" created in "TF_binding_promoters.Rmd" for folowing analysis 
+
+```{r eval=FALSE}
+
+promoters1500 <- readDNAStringSet("~/Work/2019/Analysis/TF_binding/analysed_data/promoters1500_sequence_gene_names.fasta")
+
+#create list of files
+meme_files <- list.files(pattern=".txt$", full.names = T, recursive=TRUE)
+#upload into r
+all_meme_data <- lapply(meme_files, function(x) read_meme(x))
+
+all_results_scan <- data.frame()
+for (i in 1:length(all_meme_data)) {
+  
+all_results_scan <- rbind(all_results_scan, scan_sequences(all_meme_data[i], promoters1500, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds", RC = TRUE))
+message(paste(as.character(i), "done"))
+}
+
+```
+
+```{r}
+# test <- lapply(all_meme_data[1:2], function (x)rbind(all_results_scan, scan_sequences(all_meme_data[[x]], promoters1500, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds", RC = TRUE)))
+# class(all_meme_data[[1]])
+```
+
+# meme_files # containes 2 PWMs more than should be
+# meme_files contained 2 additonal files: "./meme_m1_2.txt", "./meme_m1.txt" , what shouldn't be there.
+# it created duplicated data for PWMs containd in these files: [1] "ABI3VP1_tnt.AT5G18090_col_a_m1" "ABI3VP1_tnt.AT5G25475_col_a_m1"
+```{r eval=FALSE}
+#
+# "ABI3VP1_tnt.AT5G18090_col_a_m1"
+# "ABI3VP1_tnt.AT5G25475_col_a_m1"
+# remove duplicated rows:
+all_results_scan_deduplicated <- all_results_scan %>% 
+  distinct() 
+
+# # test deduplication:
+# test_duplic <- all_results_scan[duplicated(all_results_scan),]
+# unique(test_duplic$motif)
+# test <- all_results_scan_deduplicated[duplicated(all_results_scan_deduplicated),]
+# unique(test$motif)
+# test_deduplic <- all_results_scan[!duplicated(all_results_scan),]
+# unique(test_deduplic$motif)
+
+# Add column with family name
+all_results_scan_TF_family <- all_results_scan_deduplicated %>%  mutate(TF_family = str_remove(motif, "\\..*$"))
+
+head(all_results_scan_TF_family)
+
+```
+# Updated DATA; NO REPLICATES
+
+```{r}
+#write_csv(unique(all_results_scan), "analysed_data/TF_rc_scan_results_promoters1500_v1.csv")
+write_csv(unique(all_results_scan_deduplicated), "analysed_data/TF_rc_scan_results_promoters1500.csv")
+write_csv(unique(all_results_scan_TF_family), "analysed_data/TF_rc_scan_results_promoters1500_TF_family.csv" )
+```
+
+############################--------The end----######
+
+#Analysis of TF binding sites
+
+##1. Calculate the total number of all binding sites per TF or TF_family on each promoter and their sum
+
+```{r eval=FALSE}
+Summary_scores_TF_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>% 
+  group_by(sequence, motif) %>%
+  summarise(
+    N = n(),
+    sum_score_promoter = sum(score),
+    min_score_promoter = min(score),
+    max_score_promoter = max(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_scores_TF_per_promoter)
+#[1] 2184326       7
+
+Summary_scores_TF_family_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>%
+  group_by(sequence, TF_family) %>%
+  summarise(
+    N = n(),
+    sum_score_promoter = sum(score),
+    min_score_promoter = min(score),
+    max_score_promoter = max(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_scores_TF_family_per_promoter)
+#[1] 536102       7
+```
+
+# after removing duplicates
+```{r eval=FALSE}
+Summary_scores_TF_per_promoter_v1 <- unique(all_results_scan_TF_family) %>%
+  tbl_df() %>% 
+  group_by(sequence, motif) %>%
+  summarise(
+    N = n(),
+    sum_score_promoter = sum(score),
+    min_score_promoter = min(score),
+    max_score_promoter = max(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_scores_TF_per_promoter_v1)
+#[1] 2184326       7
+
+Summary_scores_TF_family_per_promoter_v1 <- unique(all_results_scan_TF_family) %>%
+  tbl_df() %>%
+  group_by(sequence, TF_family) %>%
+  summarise(
+    N = n(),
+    sum_score_promoter = sum(score),
+    min_score_promoter = min(score),
+    max_score_promoter = max(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_scores_TF_family_per_promoter_v1)
+#[1] 536102       7
+
+all(Summary_scores_TF_per_promoter == Summary_scores_TF_per_promoter_v1)
+# [1] FALSE
+all(Summary_scores_TF_family_per_promoter == Summary_scores_TF_family_per_promoter_v1)
+# [1] FALSE
+```
+
+
+
+##2. Select the strongest binding site per promoter:
+    1. Filter “score” == max.score, based on "score.pct" > 99% (score.pct = score/max.score)
+        1. Calculate their num/promoter
+        2. Calculate their sum/promoter
+
+```{r eval=FALSE}
+Summary_max_score_TF_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>%
+  filter(score.pct > 99) %>%
+  group_by(sequence, motif) %>%
+  summarise(
+    N = n(),
+    sum_TF_max_score_promoter = sum(score),#add mean!
+    TF_max_score_adj = mean(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_max_score_TF_per_promoter)
+#[1] 150893      6
+
+Summary_max_score_TF_family_per_promoter <- all_results_scan_TF_family %>%
+  tbl_df() %>% 
+  filter(score.pct > 99) %>%
+  group_by(sequence, TF_family) %>%
+  summarise(
+    N = n(),
+    sum_TF_max_score_promoter = sum(score),#add mean!
+    TF_max_score_adj = mean(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_max_score_TF_family_per_promoter)
+# [1] 127855      6
+```
+
+# Remove duplicated DATA
+```{r}
+Summary_max_score_TF_per_promoter_v1 <- unique(all_results_scan_TF_family) %>%
+  tbl_df() %>%
+  filter(score.pct > 99) %>%
+  group_by(sequence, motif) %>%
+  summarise(
+    N = n(),
+    sum_TF_max_score_promoter = sum(score),#add mean!
+    TF_max_score_adj = mean(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_max_score_TF_per_promoter_v1)
+#[1] 150893      6
+
+Summary_max_score_TF_family_per_promoter_v1 <- unique(all_results_scan_TF_family) %>%
+  tbl_df() %>% 
+  filter(score.pct > 99) %>%
+  group_by(sequence, TF_family) %>%
+  summarise(
+    N = n(),
+    sum_TF_max_score_promoter = sum(score),#add mean!
+    TF_max_score_adj = mean(score),
+    TF_max_score = max(max.score)
+  )
+dim(Summary_max_score_TF_family_per_promoter_v1)
+# [1] 127855      6
+
+```
+
+
+```{r eval=FALSE}
+write_csv(Summary_scores_TF_per_promoter, "analysed_data/Summary_scores_TF_per_promoter1500.csv" )
+write_csv(Summary_max_score_TF_per_promoter, "analysed_data/Summary_max_score_TF_per_promoter1500.csv" )
+write_csv(Summary_scores_TF_family_per_promoter, "analysed_data/Summary_scores_TF_family_per_promoter1500.csv" )
+write_csv(Summary_max_score_TF_family_per_promoter, "analysed_data/Summary_max_score_TF_family_per_promoter1500.csv" )
+
+write_csv(Summary_scores_TF_per_promoter_v1, "analysed_data/Summary_scores_TF_per_promoter1500_v1.csv" )
+write_csv(Summary_max_score_TF_per_promoter_v1, "analysed_data/Summary_max_score_TF_per_promoter1500_v1.csv" )
+write_csv(Summary_scores_TF_family_per_promoter_v1, "analysed_data/Summary_scores_TF_family_per_promoter1500_v1.csv" )
+write_csv(Summary_max_score_TF_family_per_promoter_v1, "analysed_data/Summary_max_score_TF_family_per_promoter1500_v1.csv" )
+
+```
+
+rm(list = ls()[!str_detect(ls(), "^Summary")])
+
+#####------The End------#######
+
+
+
+# *Sanity Check of prediction*
+
+## Check predictions made for BZRs family
+
+Extract predicted TF binding sites for BZRs
+```{r}
+BZRs <- all_results_scan_TF_family %>% 
+  filter(., str_detect(all_results_scan_TF_family$TF_family, "BZR"))
+
+```
+
+
+requires to load:
+load("~/Work/2019/Analysis/TF_binding/Data/TF_binding_promoters.RData")
+
+extract promoter info for BZRs target genes
+```{r}
+BZRs_annotation <- promoters1500_annotation[match(BZRs$sequence, mcols(promoters1500_annotation)$gene_id)]
+start(BZRs_annotation)[1]
+# [1] 140370
+end(BZRs_annotation)[1]
+# [1] 141869
+# update start to be as TF_binding site
+#start(BZRs_annotation)[1:10]
+#BZRs$start[1:10]
+start(BZRs_annotation) <- start(BZRs_annotation) + BZRs$start - 1
+start(BZRs_annotation)[1]
+# [1] 140377
+
+# update end and width to be as TF_binding site
+#table(BZRs$stop - BZRs$start)
+end(BZRs_annotation) <- start(BZRs_annotation) + (BZRs$stop - BZRs$start)
+end(BZRs_annotation)[1]
+# [1] 140387
+
+end(BZRs_annotation)[1] - start(BZRs_annotation)[1]
+# [1] 10
+#table(width(BZRs_annotation))
+
+# update the "biotype"
+mcols(BZRs_annotation)$biotype <- "TF_binding"
+
+```
+
+Import all relevant narrow peaks files for BZRs family
+```{r}
+peaks_files <- list.files(pattern=".narrowPeak$", full.names = T, recursive=TRUE)
+peaks_files <- str_subset(peaks_files, "BZR")
+#str_remove(peaks_files, "/chr1-5/chr1-5_GEM_events.narrowPeak")
+#upload into r
+BZRs_peak_data <- lapply(peaks_files, function(x) read.table(x, sep = "\t"))
+#names(BZRs_peak_data) <- str_remove(peaks_files, "./dap_data_v4/peaks/")
+
+BZRs_peak_data <- lapply(BZRs_peak_data, function(x) mutate(x, seqnames = str_remove(V1, "chr"), start = V2, end = V3))
+
+# Creat GR object with coordinates from narrow peaks
+BZRs_peak_gr <- lapply(BZRs_peak_data, function(x) GRanges(x$seqnames, IRanges(x$start, x$end)))
+
+```
+
+Count Overlaps between predicted TF binding sites for BZRs ("BZRs_annotation") and list of narrow peak for TF belong to BZR family ("BZRs_peak_gr")
+
+```{r}
+n_ol_BZRs <- lapply(BZRs_peak_gr, function(x) sum(countOverlaps(x, BZRs_annotation)))
+BZRs_peak_gr
+n_ol_BZRs
+lapply(BZRs_peak_data, function(x) dim(x))
+# The output of the overlap:
+# [[1]]
+# [1] 2459 from 5147 narrow peaks
+# 
+# [[2]]
+# [1] 933 from 865 narrow peaks
+# 
+# [[3]]
+# [1] 2681 from 6039 narrow peaks
+# 
+# [[4]]
+# [1] 923 from 1018 narrow peaks
+
+2459+933+2681+923
+# [1] 6996
+BZRs_annotation
+# GRanges object with 5306 ranges
+```
+
+# Conclusion: It looks like that there is a very small overlap between predicted TF_binding sites based on PWMs and narrow peaks extracted from Ecker paper
+
+```{r}
+BZRs_peak_gr[[1]]
+BZRs_peak_gr[[1]][order(seqnames(BZRs_peak_gr[[1]]))]
+BZRs_annotation
+ov <- findOverlaps(BZRs_peak_gr[[1]][order(seqnames(BZRs_peak_gr[[1]]))], BZRs_annotation )
+BZRs_peak_gr[[1]][order(seqnames(BZRs_peak_gr[[1]]))][queryHits(ov)]
+BZRs_annotation[subjectHits(ov)]
+```
+
+
+get sequence for predicted regions to see how it's related to the BZR's motif "CACGTG"
+```{r}
+library(Biostrings)
+library(BSgenome)
+
+fasta <- Biostrings::readDNAStringSet("../Promoters/Arabidopsis_thaliana.TAIR10.42.dna.genome.fa")
+names(fasta) <- c("1", "2", "3", "4", "5", "Mt", "Pt")
+
+BZRs_seq <- getSeq(fasta, granges(BZRs_annotation))
+
+BZRs_seq_TF_prediction <-as.character(BZRs_seq)
+
+# Test count of different substrings
+sum(str_count(as.character(BZRs_seq), "CACGTG"))
+sum(str_count(as.character(BZRs_seq), "ACGTG"))
+sum(str_count(as.character(BZRs_seq), "CACGT"))
+sum(str_count(as.character(BZRs_seq), "ACGT"))
+
+sum(str_count(BZRs$match, "CACGTG"))
+# [1] 5294
+BZRs$match[1:10]
+
+AT1G01360 <- BZRs[1,]
+# AT1G01360	8	18	TACACGTGTCA
+promoters1500_annotation[match(BZRs$sequence, mcols(promoters1500_annotation)$gene_id)][1]
+getSeq(fasta, promoters1500_annotation[match(BZRs$sequence, mcols(promoters1500_annotation)$gene_id)][1])
+getSeq(fasta,BZRs_annotation[1]) # 140362-140371
+#140370-141869
+BZRs$match[1]
+```
+
+
+```{r}
+# Select only TF what have data about narrow peaks: "At1g78700_col_a", "At4g18890_col_a", "At4g36780_col_a", "BZR1_col_a"
+BZRs_selected <- BZRs %>% filter(., str_detect(motif, "At1g78700_col_a") | str_detect(motif, "At4g18890_col_a") | str_detect(motif, "At4g36780_col_a") | str_detect(motif, "BZR1_col_a"))
+
+BZRs_selected_annotation <- promoters1500_annotation[match(BZRs_selected$sequence, mcols(promoters1500_annotation)$gene_id)]
+start(BZRs_selected_annotation) <- start(BZRs_selected_annotation) + BZRs_selected$start - 1
+
+# update end and width to be as TF_binding site
+end(BZRs_selected_annotation) <- start(BZRs_selected_annotation) + (BZRs_selected$stop - BZRs_selected$start)
+
+end(BZRs_selected_annotation)[1] - start(BZRs_selected_annotation)[1]
+# [1] 10
+
+# update the "biotype"
+mcols(BZRs_selected_annotation)$biotype <- "TF_binding"
+
+
+nrow(BZRs %>% filter(., str_detect(motif, "At1g78700_col_a")))
+nrow(BZRs %>% filter(., str_detect(motif, "At4g18890_col_a")))
+nrow(BZRs %>% filter(., str_detect(motif, "At4g36780_col_a")))
+nrow(BZRs %>% filter(., str_detect(motif, "BZR1_col_a")))
+
+# [1] 772
+# [1] 1349
+# [1] 746
+# [1] 341
+
+772+1349+ 746+ 341
+#[1] 3208
+```
+
+
+Count Overlaps between predicted TF binding sites for selected BZRs that have Narrow peak info ("BZRs_selected_annotation") and list of narrow peaks for TF belong to BZR family ("BZRs_peak_gr")
+I don't have strand info for peaks, it mihgt cause overistimation of the overlap
+
+```{r}
+# find predicted TF found "within" narrow peaks
+n_ol_BZRs_selescted <- lapply(BZRs_peak_gr, function(x) sum(countOverlaps(BZRs_selected_annotation, x, type = "within", ignore.strand=TRUE)))
+BZRs_peak_gr
+n_ol_BZRs_selescted
+lapply(BZRs_peak_data, function(x) dim(x))
+# The output of the overlap:
+# [[1]]
+# [1] 1458 from 5147 narrow peaks
+# 
+# [[2]]
+# [1] 542 from 865 narrow peaks
+# 
+# [[3]]
+# [1] 1599 from 6039 narrow peaks
+# 
+# [[4]]
+# [1] 538 from 1018 narrow peaks
+
+1477+522+1622+538
+#[1] 4159
+
+# find how many FALSE positive have been predicted:
+false_ol_BZRs_selescted <- lapply(BZRs_peak_gr, function(x) GenomicRanges::setdiff(BZRs_selected_annotation, x, ignore.strand=TRUE))
+# GRanges object with 1031 ranges
+1031+1512+947+1519
+#[1] 5009
+
+intersect_ol_BZRs_selescted <- lapply(BZRs_peak_gr, function(x) GenomicRanges::intersect(BZRs_selected_annotation, x, ignore.strand=TRUE))
+# GRanges object with 681
+# 681 + 199 + 769 + 189
+# # [1] 1838
+# # from 3208 predicted sites
+
+
+# Found TF_predicted found within Narrow Peaks
+ol_BZRs_selescted <- lapply(BZRs_peak_gr, function(x) findOverlaps(BZRs_selected_annotation, x, type = "within", ignore.strand=TRUE))
+
+ol_BZRs_selescted
+# TF_predicted
+BZRs_selected_annotation[queryHits(ol_BZRs_selescted[[1]])]
+BZRs_selected_annotation[unique(queryHits(ol_BZRs_selescted[[1]]))]
+# 1458 from 3208 predicted binding sites
+# unique 1379
+
+# Peaks
+BZRs_peak_gr[[1]][subjectHits(ol_BZRs_selescted[[1]])]
+BZRs_peak_gr[[1]][unique(subjectHits(ol_BZRs_selescted[[1]]))]
+# 1458 from 5147 peaks
+# unique 637
+
+
+
+
+# Count TF_predicted found within Narrow Peaks
+lapply(BZRs_peak_gr, function(x) sum(countOverlaps(BZRs_selected_annotation, x, type = "within", ignore.strand=TRUE)))
+# [1] 1458
+1458+542+1599+535
+# Total in BZRs
+# [1] 4134
+
+lapply(BZRs_peak_gr, function(x) table(countOverlaps(BZRs_selected_annotation, x, type = "within", ignore.strand=TRUE)))
+# [[1]]
+# 
+#    0    1    2 
+# 1829 1300   79 
+# 1379 unique
+
+
+# Check the overlaps inside the narow peak data itselve
+lapply(BZRs_peak_gr, function(x) findOverlaps(x, ignore.strand=TRUE, drop.self=TRUE, drop.redundant=TRUE))
+# 265
+# 61
+# 397
+# 22
+
+lapply(BZRs_peak_gr, function(x) findOverlaps(x, ignore.strand=TRUE, drop.self=TRUE))
+# 530 from 5147
+# 122 from 865
+# 794 from 6039
+# 44 from 1018
+530+122+794+44
+# [1] 1490
+
+findOverlaps(BZRs_selected_annotation, ignore.strand=TRUE, drop.self=TRUE, drop.redundant=TRUE)
+
+BZRs_selected_annotation[unique(queryHits(findOverlaps(BZRs_selected_annotation, ignore.strand=TRUE, drop.self=TRUE, drop.redundant=TRUE)))]
+# 1500 ranges
+
+BZRs_selected_annotation[queryHits(findOverlaps(BZRs_selected_annotation, ignore.strand=TRUE, drop.self=TRUE, drop.redundant=TRUE))]
+# 2285 ranges
+
+sum(countOverlaps(BZRs_selected_annotation))
+table(countOverlaps(BZRs_selected_annotation, type = "start"))
+```
+
+
+# Redo analysis per each TF separately and not all family together
+## At1g78700
+```{r}
+# Select only TF what have data about narrow peaks: "At1g78700_col_a", "At4g18890_col_a", "At4g36780_col_a", "BZR1_col_a"
+BZRs_At1g78700 <- BZRs %>% filter(., str_detect(motif, "At1g78700_col_a"))
+
+BZRs_At1g78700_annotation <- promoters1500_annotation[match(BZRs_At1g78700$sequence, mcols(promoters1500_annotation)$gene_id)]
+start(BZRs_At1g78700_annotation) <- start(BZRs_At1g78700_annotation) + BZRs_At1g78700$start - 1
+
+# update end and width to be as TF_binding site
+end(BZRs_At1g78700_annotation) <- start(BZRs_At1g78700_annotation) + (BZRs_At1g78700$stop - BZRs_At1g78700$start)
+
+end(BZRs_At1g78700_annotation)[1] - start(BZRs_At1g78700_annotation)[1]
+# [1] 10
+
+
+######------#####
+
+# find predicted TF found "within" narrow peaks
+n_ol_BZRs_At1g78700 <- sum(countOverlaps(BZRs_At1g78700_annotation, BZRs_peak_gr[[1]], type = "within", ignore.strand=TRUE))
+BZRs_peak_gr
+n_ol_BZRs_At1g78700
+# [1] 369
+nrow(BZRs_At1g78700)
+# [1] 772
+
+table(countOverlaps(BZRs_At1g78700_annotation, BZRs_peak_gr[[1]], type = "within", ignore.strand=TRUE))
+#   0   1   2 
+# 424 327  21 
+# [1] 348 unique overlaps
+
+intersect_ol_At1g78700 <- GenomicRanges::intersect(BZRs_At1g78700_annotation, BZRs_peak_gr[[1]], ignore.strand=TRUE)
+# GRanges object with 350
+
+
+# Found TF_predicted found within Narrow Peaks
+ol_BZRs_At1g78700 <- findOverlaps(BZRs_At1g78700_annotation, BZRs_peak_gr[[1]], type = "within", ignore.strand=TRUE)
+
+# TF_predicted
+BZRs_At1g78700_annotation[queryHits(ol_BZRs_At1g78700)]
+BZRs_At1g78700_annotation[unique(queryHits(ol_BZRs_At1g78700))]
+# 369 from 772 predicted binding sites
+# unique 348
+
+# Peaks
+BZRs_peak_gr[[1]][subjectHits(ol_BZRs_At1g78700)]
+BZRs_peak_gr[[1]][unique(subjectHits(ol_BZRs_At1g78700))]
+# 369 from 5147 peaks
+# unique 345
+```
+
+
+## At4g18890_col_a
+```{r}
+# Select only TF what have data about narrow peaks: "At1g78700_col_a", "At4g18890_col_a", "At4g36780_col_a", "BZR1_col_a"
+BZRs_At4g18890 <- BZRs %>% filter(., str_detect(motif, "At4g18890_col_a"))
+
+BZRs_At4g18890_annotation <- promoters1500_annotation[match(BZRs_At4g18890$sequence, mcols(promoters1500_annotation)$gene_id)]
+start(BZRs_At4g18890_annotation) <- start(BZRs_At4g18890_annotation) + BZRs_At4g18890$start - 1
+
+# update end and width to be as TF_binding site
+end(BZRs_At4g18890_annotation) <- start(BZRs_At4g18890_annotation) + (BZRs_At4g18890$stop - BZRs_At4g18890$start)
+
+end(BZRs_At4g18890_annotation)[1] - start(BZRs_At4g18890_annotation)[1]
+# [1] 10
+
+
+######------#####
+
+# find predicted TF found "within" narrow peaks
+n_ol_BZRs_At4g18890 <- sum(countOverlaps(BZRs_At4g18890_annotation, BZRs_peak_gr[[2]], type = "within", ignore.strand=TRUE))
+BZRs_peak_gr[[2]]
+# 865
+n_ol_BZRs_At4g18890
+# [1] 182
+nrow(BZRs_At4g18890)
+# [1] 1349
+
+table(countOverlaps(BZRs_At4g18890_annotation, BZRs_peak_gr[[2]], type = "within", ignore.strand=TRUE))
+#  0    1    2 
+# 1187  142   20 
+# [1] 162 unique overlaps
+
+intersect_ol_At4g18890 <- GenomicRanges::intersect(BZRs_At4g18890_annotation, BZRs_peak_gr[[2]], ignore.strand=TRUE)
+# GRanges object with 163
+
+
+# Found TF_predicted found within Narrow Peaks
+ol_BZRs_At4g18890 <- findOverlaps(BZRs_At4g18890_annotation, BZRs_peak_gr[[2]], type = "within", ignore.strand=TRUE)
+
+# TF_predicted
+BZRs_At4g18890_annotation[queryHits(ol_BZRs_At4g18890)]
+BZRs_At4g18890_annotation[unique(queryHits(ol_BZRs_At4g18890))]
+# 182 from 1349 predicted binding sites
+# unique 162
+
+# Peaks
+BZRs_peak_gr[[2]][subjectHits(ol_BZRs_At4g18890)]
+BZRs_peak_gr[[2]][unique(subjectHits(ol_BZRs_At4g18890))]
+# 182 from 865 peaks
+# unique 146
+
+table(countOverlaps(BZRs_At4g18890_annotation, BZRs_peak_gr[[1]], type = "within", ignore.strand=TRUE))
+#   0   1   2 
+# 813 511  25 
+# 
+table(countOverlaps(BZRs_At4g18890_annotation, BZRs_peak_gr[[3]], type = "within", ignore.strand=TRUE))
+#   0   1   2 
+# 752 563  34 
+# 
+table(countOverlaps(BZRs_At4g18890_annotation, BZRs_peak_gr[[4]], type = "within", ignore.strand=TRUE))
+#    0    1    2 
+# 1194  149    6 
+
+# The most overlap surprisingly with peaks found for other TF (#1: At1g78700_col_a , and #3: At4g36780_col_a)
+```
+
+## At1g78700
+```{r}
+# Select only TF what have data about narrow peaks: "At1g78700_col_a", "At4g18890_col_a", "At4g36780_col_a", "BZR1_col_a"
+BZRs_At4g36780 <- BZRs %>% filter(., str_detect(motif, "At4g36780_col_a"))
+
+BZRs_At4g36780_annotation <- promoters1500_annotation[match(BZRs_At4g36780$sequence, mcols(promoters1500_annotation)$gene_id)]
+start(BZRs_At4g36780_annotation) <- start(BZRs_At4g36780_annotation) + BZRs_At4g36780$start - 1
+
+# update end and width to be as TF_binding site
+end(BZRs_At4g36780_annotation) <- start(BZRs_At4g36780_annotation) + (BZRs_At4g36780$stop - BZRs_At4g36780$start)
+
+end(BZRs_At4g36780_annotation)[1] - start(BZRs_At4g36780_annotation)[1]
+# [1] 10
+
+
+######------#####
+
+# find predicted TF found "within" narrow peaks
+n_ol_BZRs_At4g36780 <- sum(countOverlaps(BZRs_At4g36780_annotation, BZRs_peak_gr[[3]], type = "within", ignore.strand=TRUE))
+BZRs_peak_gr[[3]]
+# 6039
+n_ol_BZRs_At4g36780
+# [1] 395
+nrow(BZRs_At4g36780)
+# [1] 746
+
+table(countOverlaps(BZRs_At4g36780_annotation, BZRs_peak_gr[[3]], type = "within", ignore.strand=TRUE))
+#   0   1   2 
+# 376 345  25  
+# [1] 370 unique overlaps
+
+intersect_ol_At4g36780 <- GenomicRanges::intersect(BZRs_At4g36780_annotation, BZRs_peak_gr[[3]], ignore.strand=TRUE)
+length(intersect_ol_At4g36780)
+#372
+
+# Found TF_predicted found within Narrow Peaks
+ol_BZRs_At4g36780 <- findOverlaps(BZRs_At4g36780_annotation, BZRs_peak_gr[[3]], type = "within", ignore.strand=TRUE)
+
+# TF_predicted
+length(BZRs_At4g36780_annotation[queryHits(ol_BZRs_At4g36780)])
+length(BZRs_At4g36780_annotation[unique(queryHits(ol_BZRs_At4g36780))])
+# 395 from 746 predicted binding sites
+# unique 370
+
+# Peaks
+BZRs_peak_gr[[3]][subjectHits(ol_BZRs_At4g36780)]
+BZRs_peak_gr[[3]][unique(subjectHits(ol_BZRs_At4g36780))]
+# 395 from 6039 peaks
+# unique 373
+```
+
+# Update peaks to include only ones in promoters
+# 1. Apply on BZRs family
+```{r}
+#------find overlap between Narrow peaks and annatated promoters between genes, the shortest will become a new coordinates.
+#-----NOT WAHT I WANT!
+intersect_promoters_peaks <- GenomicRanges::intersect(promoters1500_annotation, BZRs_peak_gr[[1]], ignore.strand=TRUE)
+length(intersect_promoters_peaks)
+#[1] 1760
+length(BZRs_peak_gr[[1]])
+# 5147
+length(promoters1500_annotation)
+# [1] 21821
+
+table(width(intersect_promoters_peaks))
+
+intersect_promoters_peaks_2 <- GenomicRanges::intersect(promoters1500_annotation, BZRs_peak_gr[[2]], ignore.strand=TRUE)
+length(intersect_promoters_peaks_2)
+#[1] 308
+length(BZRs_peak_gr[[2]])
+#[1] 865
+length(promoters1500_annotation)
+# [1] 21821
+
+####-------########
+overlap_promoters_peaks_1 <- findOverlaps(BZRs_peak_gr[[1]], promoters1500_annotation, type = "within", ignore.strand=TRUE) 
+# add type = "any", minoverlap=190L, to controll the lenght of overlap
+BZRs_peak_gr[[1]][queryHits(overlap_promoters_peaks_1)]
+# 1489
+
+overlap_promoters_peaks_2 <- findOverlaps(BZRs_peak_gr[[2]], promoters1500_annotation, type = "within", ignore.strand=TRUE) 
+# add type = "any", minoverlap=190L, to controll the lenght of overlap
+overlap_promoters_peaks_2 <- BZRs_peak_gr[[2]][queryHits(overlap_promoters_peaks_2)]
+# 259
+# table(width(overlap_promoters_peaks_2))
+# 202 
+# 259 
+```
+
+
+# 2. Apply to all peaks
+Import all relevant narrow peaks files and create list of GR obgects
+```{r}
+peaks_files <- list.files(pattern=".narrowPeak$", full.names = T, recursive=TRUE)
+
+#upload into r
+peak_data <- lapply(peaks_files, function(x) read.table(x, sep = "\t"))
+#names(BZRs_peak_data) <- str_remove(peaks_files, "./dap_data_v4/peaks/")
+
+peak_data <- lapply(peak_data, function(x) mutate(x, seqnames = str_remove(V1, "chr"), start = V2, end = V3))
+
+# Creat GR object with coordinates from narrow peaks
+peak_gr <- lapply(peak_data, function(x) GRanges(x$seqnames, IRanges(x$start, x$end)))
+peak_gr[[100]]
+peaks_files[[100]]
+peak_data[[100]]
+
+
+```
+
+## Find Narrow Peaks of TF binding sites within the promoters:
+Overlap between Narrow Peaks of TF binding sites ("peak_gr") and annotated promoters_1500 ("promoters1500_annotation")
+
+```{r}
+overlap_promoters_peaks <- lapply(peak_gr, function(x) findOverlaps(x, promoters1500_annotation, type = "within", ignore.strand=TRUE))
+
+# Creat gr for peaks_in_promoters
+peaks_in_promoters <- GRangesList()
+for ( i in 1:length(peak_gr)){
+  peaks_in_promoters[[i]] <- GRangesList(peak_gr[[i]][queryHits(overlap_promoters_peaks[[i]])])
+}
+
+names(peaks_in_promoters) <- str_replace(peaks_files, "./dap_data_v4/peaks/", "") %>% 
+ str_replace( "/chr1-5/chr1-5_GEM_events.narrowPeak", "")
+
+
+length(peaks_files)
+length(peak_gr)
+length(peaks_in_promoters)
+# 568
+
+# Create gr for promoters with narrow peaks
+promoters_with_peaks <- GRangesList()
+for ( i in 1:length(peak_gr)){
+  promoters_with_peaks[[i]] <- GRangesList(promoters1500_annotation[subjectHits(overlap_promoters_peaks[[i]])])
+}
+names(promoters_with_peaks) <- str_replace(peaks_files, "./dap_data_v4/peaks/", "") %>% 
+ str_replace( "/chr1-5/chr1-5_GEM_events.narrowPeak", "")
+
+
+# names(promoters_with_peaks)
+# ranges(promoters_with_peaks[100])
+# ranges(peaks_in_promoters)[100]
+
+# First save with different name, and add additional columns with TF info
+promoters_with_peaks_gr <- unlist(promoters_with_peaks)
+
+
+mcols(promoters_with_peaks_gr)$TF_family  <- str_remove(names(promoters_with_peaks_gr), "/.*")
+mcols(promoters_with_peaks_gr)$TF  <- str_remove(names(promoters_with_peaks_gr), ".*/")
+mcols(promoters_with_peaks_gr)$motif <- str_replace(names(promoters_with_peaks_gr), "/", ".")
+
+# names(promoters_with_peaks)[1]
+# str_remove(names(unlist(promoters_with_peaks)), ".*/")[1] # TF name
+# str_remove(names(unlist(promoters_with_peaks)), "/.*")[1]
+
+promoters_with_peaks_lgr <- relist(promoters_with_peaks_gr, promoters_with_peaks)
+
+Summary_narrow_peaks_TF_per_promoter <- data.frame("gene_id" = mcols(promoters_with_peaks_gr)$gene_id,
+                                                    "motif" = mcols(promoters_with_peaks_gr)$motif,
+                                                    "TF" = mcols(promoters_with_peaks_gr)$TF, 
+                                                    "TF_family" = mcols(promoters_with_peaks_gr)$TF_family)
+write_csv(Summary_narrow_peaks_TF_per_promoter, "analysed_data/Summary_narrow_peaks_TF_per_promoter1500.csv")
+
+
+```
+# Hits object with 6505 hits
+# queryLength: 19106 / subjectLength: 21821
+maybe used to create log file
+## Important note: 
+1. There are some TF found more than once in the same promoter
+2. There is no info about strand direction of Narrow Peaks, what's why some peaks matching more than 1 promoter  
+
+```{r}
+length(unique(Summary_narrow_peaks_TF_per_promoter$gene_id))
+```
+
+
+
+

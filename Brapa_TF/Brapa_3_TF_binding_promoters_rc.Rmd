@@ -1,0 +1,68 @@
+---
+title: "Identification of TF binding sites in Brassica Rapa based on PWM from Arabidopsis, using Biocondauctor/universalmotif"
+output: html_document
+---
+Purpose:
+redo TF binding site prediction with reverse complement
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(TFBSTools)
+library(universalmotif)
+library(rtracklayer)
+library(Biostrings)
+library(tidyverse)
+```
+
+
+
+Use "Brapa3_promoters_1500" for following analysis, to predict TF binding sites.
+
+```{r eval=FALSE}
+#output of Biostrings after promoter anotation
+Brapa3_promoters_1500 <- readDNAStringSet("~/Work/2019/Analysis/Promoters/BRapa/Brapa_v3.0/promoters/Brapa_3.0_promoters_1500.fa")
+
+#create list of files
+meme_files <- list.files("~/Work/2019/Analysis/TF_binding/motifs" ,pattern=".txt$", full.names = T, recursive=TRUE)
+#upload into r
+all_meme_data <- lapply(meme_files, function(x) read_meme(x))
+
+all_results_scan <- data.frame()
+for (i in 1:length(all_meme_data)) {
+  
+all_results_scan <- rbind(all_results_scan, scan_sequences(all_meme_data[i], Brapa3_promoters_1500, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds", RC = TRUE))
+}
+
+head(all_results_scan)
+tail(all_results_scan)
+
+#all_results_scan %>%  mutate(TF_family = motif) %>% mutate(TF = str_remove(motif, "\\..*$"))
+
+all_results_scan_TF_family <- all_results_scan %>%  mutate(TF_family = str_remove(motif, "\\..*$"))
+
+```
+
+
+```{r eval=FALSE}
+# getwd()
+# dir.create("Brapa_3/analysed_data/")
+write_csv(all_results_scan, "Brapa_3/analysed_data/TF_rc_scan_results_Brapa3_promoters1500.csv" )
+write_csv(all_results_scan_TF_family, "Brapa_3/analysed_data/TF_rc_scan_results_Brapa3_promoters1500_TF_family.csv" )
+
+```
+
+
+* Processing motifs
+ * Processing sequences
+Non-standard letters found, these will be ignored * Scanning sequences for motifs
+ * Processing results
+ * Generating output
+###############################################the end of prediction ####################### 
+
+
+
+
+
