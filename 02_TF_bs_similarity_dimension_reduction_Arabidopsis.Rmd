@@ -1,0 +1,634 @@
+---
+title: "Analysis of TF binding site similarity in Arabidopsis"
+output: html_notebook
+---
+
+
+Aim: To compare predicted binding sites of TFs and find % of binding sites overlap by 4 or more base pairs
+data_input: Arabidopsis: analysed_data/TF_rc_scan_results_promoters1500_TF_family.csv 
+            Brassica: Brapa_3/analysed_data/TF_rc_scan_results_Brapa3_promoters1500_TF_family.csv
+   
+
+# load packages:
+```{r}
+source("scripts/pkgs.R")
+```
+
+# load data = the results of predicted TF's binding sites in 1500 bp promoters in Arabidopsis
+```{r}
+TF_scan <- read_csv("../TF_binding/analysed_data/TF_rc_scan_results_promoters1500_TF_family.csv")
+```
+
+# Update "start" and "stop" coordinates for "-" strand to be always start < stop
+```{r}
+TF_scan_updated <- 
+TF_scan %>% 
+  mutate(start_updated = if_else(strand == "-", stop, start), stop_updated = if_else(strand == "-", start, stop)) 
+
+# Create list of all TF; Consider to sort next time
+TF_list <- sort(unique(TF_scan$motif))
+
+# Calculate total number of binding site for each TF; order as TF_list 
+N_TF_bs <- TF_scan %>% 
+  count(motif)
+```
+
+
+# In order to find overlaps in TF binding sites use GRanges
+# Create GRanges obgect; use ID number instead of "chromosome names" as seqnames to use later to find overlaps
+```{r}
+Ara_gr <- GRanges(seqnames = Rle(TF_scan_updated$sequence),
+              ranges = IRanges(TF_scan_updated$start_updated, end = TF_scan_updated$stop_updated),
+               strand = Rle(strand(TF_scan_updated$strand)), select(TF_scan_updated, -starts_with("stop"), -starts_with("start"), -strand ))
+Ara_gr
+```
+
+
+##------*Development*--------##
+##------ Quick test of consept for finding "overlaps"
+```{r}
+Ara_gr_TF1 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF_list[1]]
+
+Ara_gr_TF2 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF_list[2]]
+
+findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+queryHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")) #TF1
+subjectHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")) #TF2
+countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+sum(countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any"))
+
+test_1 <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+nLnode(test_1)
+nRnode(test_1)
+
+```
+
+
+##------ Development of function to include more info, like number of TF binding sites having overlap (not the same as tot N of overlaps)
+```{r}
+Ara_gr_TF1 <- 
+  Ara_gr[mcols(Ara_gr)$motif == "ABI3VP1_tnt.VRN1_col_a_m1"]
+
+Ara_gr_TF2 <- 
+  Ara_gr[mcols(Ara_gr)$motif == "ABI3VP1_tnt.VRN1_colamp_a_m1"]
+
+findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+queryHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")) #TF1
+subjectHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")) #TF2
+countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+sum(countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any"))
+
+test_1 <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+nLnode(test_1)
+nRnode(test_1)
+
+findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")[1:100]
+
+Ara_gr_TF1[1]
+Ara_gr_TF2[54:58]
+
+findOverlaps(Ara_gr_TF2, Ara_gr_TF1, minoverlap=4L, type = "any")
+
+
+length(unique(queryHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any"))))
+length(queryHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")))
+
+length(unique(subjectHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any"))))
+length(subjectHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")))
+
+which(TF_list=="ABI3VP1_tnt.VRN1_col_a_m1")
+which(TF_list=="ABI3VP1_tnt.VRN1_colamp_a_m1")
+```
+
+##------
+
+#--Write function *Overlap_TF_bs* to calculate number of binding sites overlapping in two TFs (pairwised). The output will include more info, like the number of TF binding sites having overlap (not the same as tot N of overlaps), number of overlaps
+```{r}
+
+Overlap_TF_bs <- function(n,m){
+  TF1 <- TF_list[n]
+  TF2 <- TF_list[m]
+  
+  Ara_gr_TF1 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF1]
+
+Ara_gr_TF2 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF2]
+
+Overlap_TF <- findOverlaps(query = Ara_gr_TF1, subject = Ara_gr_TF2, minoverlap = 4L, type = "any")
+
+message(paste(n,m))
+
+return(
+data.frame("motif_1" = TF1, "motif_2" = TF2, 
+           "overlap" = length(queryHits(Overlap_TF)), 
+            "overlap_TF_1" = length(unique(queryHits(Overlap_TF))),
+              "overlap_TF_2" = length(unique(subjectHits(Overlap_TF))),
+                "tot_TF1" = nLnode(Overlap_TF),
+                 "tot_TF2" = nRnode(Overlap_TF), 
+                   stringsAsFactors = FALSE)
+      )
+}
+
+Overlap_TF_bs(8,9)
+
+```
+
+
+
+###-- Run *Overlap_TF_bs* on parts of the TF_list
+
+```{r}
+
+n = length(TF_list)
+
+x <- Sys.time()
+# last run 600:(n-1)
+
+Results_1_300 <- lapply(seq_along(TF_list[1:300]), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x 
+
+Results_df <- do.call(bind_rows, Results_1_300)
+
+```
+
+
+```{r}
+write_csv(Results_df, "output_data/Results_1_300.csv")
+saveRDS(file = here(paste0("output_data","Results_1_300",".rda")) , Results_1_300)
+```
+
+```{r}
+# read_rds("output_data/output_dataResults_701.rda") #Stack computer
+```
+
+```{r}
+###########
+
+n = length(TF_list)
+
+x <- Sys.time()
+# last run 601:(n-1)
+
+Results_301_600 <- lapply(seq(301,600), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x 
+
+############
+n = length(TF_list)
+
+x <- Sys.time()
+# last run 601:(n-1)
+
+Results_601_700 <- lapply(seq(601,700), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x 
+
+############
+n = length(TF_list)
+
+x <- Sys.time()
+# last run 601:(n-1)
+
+Results_701_871 <- lapply(seq(701,871), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x 
+
+##########
+```
+
+##-- If required to run *Overlap_TF_bs* on wholl data set at once---#########
+```{r eval=FALSE, include=FALSE}
+n = length(TF_list)
+x <- Sys.time()
+
+Results_all <- lapply(seq_along(TF_list[1:(n-1)]), function(y)(
+  unlist(lapply(seq(y+1,n), function(x)test(n=y, m=x)))
+)
+
+)
+
+Sys.time()-x 
+```
+
+
+
+## Combine all the partial runs (have been done in diiferent projects in parallel)
+## Calculate the percentage of overlaping binding sites to all TF pairedwise, on all data at the end
+```{r}
+Results_df_2 <- do.call(bind_rows, c(Results_301_600, Results_601_700, Results_701_871))
+# Results_df_2 <- read_csv("../TF_binding/output_data/Results_301_782.csv")
+
+
+```
+
+###-- Save output as ".rda" and ".csv"
+```{r}
+saveRDS(file = here(paste0("output_data","Results_301_600",".rda")) , Results_301_600)
+saveRDS(file = here(paste0("output_data","Results_061_700",".rda")) , Results_601_700)
+saveRDS(file = here(paste0("output_data","Results_701",".rda")) , Results_701_871)
+write_csv(Results_df_2, "../TF_binding/output_data/Results_301_782.csv")
+
+```
+
+
+##--read saved output
+```{r}
+Results_1_300 <- read_csv(here("output_data/02_TF_bs_similarity_dimension_reduction_Arabidopsis/", "Results_1_300.csv"))
+Results_301_782<- read_csv(here("output_data/02_TF_bs_similarity_dimension_reduction_Arabidopsis/", "Results_301_782.csv"))
+
+
+
+Results_all_df <- bind_rows(Results_1_300, Results_301_782) %>%
+  mutate( pct_overlap_TF1 = round(overlap_TF_1/tot_TF1,2 ),
+                   pct_overlap_TF2 = round(overlap_TF_2/tot_TF2, 2)) 
+
+Results_all_df %>%
+ arrange(desc(pct_overlap_TF1, pct_overlap_TF2))
+
+# write_csv(Results_all_df, "../TF_binding/output_data/Results_overlap_TFs_all.csv")
+```
+
+
+##------*Development*--------##
+###-- Write function calculating number of overlaps between binding sites of certain TF and all the rest of TF from the list "TF_list"
+###-*Note This functoin not suitable for calculation of %  of overlaped TF bs between two TFs*
+###-Output total namber of overlapes (if TF1 has n overlaps with TF2, it will count it as n)
+```{r}
+
+Overlap_TF_bs <- function(n,m){
+  Ara_gr_TF1 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF_list[n]]
+
+Ara_gr_TF2 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF_list[m]]
+
+message(paste(n,m))
+
+return(
+data.frame("motif_1" = TF_list[n], "motif_2" = TF_list[m], "overlap" = sum(countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")), stringsAsFactors = FALSE)
+
+)
+
+}
+
+# --- Run the following for pairwise comparesent af all TFs ##########
+
+n = length(TF_list)
+x <- Sys.time()
+
+Results <- lapply(seq_along(TF_list[1:(n-1)]), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x
+
+Results_df <- do.call(bind_rows, Results)
+
+```
+
+
+##--Test that all TFs have been compared properly
+```{r cache=TRUE, include=FALSE, results='hide'}
+Overlap_TF_bs_test <- function(n,m){
+  TF1 <- TF_list[n]
+  TF2 <- TF_list[m]
+  
+#   Ara_gr_TF1 <- 
+#   Ara_gr[mcols(Ara_gr)$motif == TF1]
+# 
+# Ara_gr_TF2 <- 
+#   Ara_gr[mcols(Ara_gr)$motif == TF2]
+
+# Overlap_TF <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+
+message(paste(n,m))
+
+return(
+data.frame("motif_1" = TF1, "motif_2" = TF2,
+           "n_m" = paste(n,m), stringsAsFactors = FALSE)
+      )
+}
+
+#########
+Overlap_TF_bs_test(8,9)
+
+##########
+n = length(TF_list)
+x <- Sys.time()
+
+Results_all_test <- lapply(seq_along(TF_list[1:(n-1)]), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs_test(n=y, m=x))
+)
+
+)
+
+Sys.time()-x 
+
+Results_all_test_df <- do.call(bind_rows, Results_all_test)
+all(Results_all_df$motif_2 == Results_all_test_df$motif_2) #should be TRUE
+all(Results_all_df$motif_1 == Results_all_test_df$motif_1)
+```
+
+Time difference of 3.931119 mins
+### Consider to parallelirise:
+
+library(parallel)
+library(MASS)
+
+mclapply(starts, fx, mc.cores = numCores)
+
+
+
+#####---*TEST*------########
+
+##--read saved output
+
+
+
+###--Check if tot N bs is OK
+####--compare calculated by "Overlap_TF_bs" and  "N_TF_bs"
+
+
+
+```{r}
+Results_all_test <- read_csv("../TF_binding/output_data/02_TF_bs_similarity_dimension_reduction_Arabidopsis/Results_overlap_TFs_all.csv")
+
+
+test <- bind_rows(
+# part_1
+ (Results_all_test %>% 
+   select(motif_1, motif_2, overlap = overlap_TF_1, tot = tot_TF1)),
+   
+# part_2 
+(Results_all_test %>% 
+   select(motif_2 = motif_1, motif_1 = motif_2, overlap = overlap_TF_2, tot = tot_TF2)),
+# part_3
+ (N_TF_bs %>% 
+  select(motif_1 = motif, tot = n) %>% 
+  mutate(motif_2 = motif_1, overlap = tot))
+) %>%
+
+  mutate(pct_overlap = round(overlap/tot*100,3)) %>%
+  select(-overlap, -tot) %>%
+  spread(motif_2, pct_overlap)
+
+
+
+
+which(is.na(test), arr.ind = TRUE)
+test[1,2]
+
+```
+
+```{r}
+source("~/Work/2019/Analysis/Utilities_R/Functions/My_functions.R")
+
+data_matrix <- test
+Title_plot <- "hclust_test" # main= Title for the plot; string
+Path_to_output_results <- "../TF_binding/output_data/"
+Path_to_plot <- "../TF_binding/plots/"
+
+```
+
+
+#### Clustering TF binding site by hclust.person / columns
+```{r eval=FALSE}
+#arguments:
+hclust_data <- data_matrix %>% column_to_rownames(.,var = "motif_1") #Input matrix to cluster
+
+k_row = 20  # n of clusters in cutree 
+k_col = 20
+
+
+my_brewer_par <- c(brewer.pal(12,'Paired'),brewer.pal(8,'Set1'))
+
+
+hclust_rows <- hclust.person.rows(hclust_data, k_row) #from my_functions
+names(hclust_rows)
+#[1] "Rowv_arg" "RowSideColors_arg" "Cluster_rows"   
+
+hclust_columns <- hclust.person.columns(hclust_data, k_col)
+names(hclust_columns)
+#[1] "Colv_arg" "ColSideColors_arg" "Cluster_columns"  
+
+names(hclust_data)
+
+
+```
+
+
+##-- Create heatmap
+###-- Define arguments
+```{r eval=FALSE}
+#arguments:
+data_plot <- hclust_data #Input matrix to plot
+
+column_names <- str_remove(colnames(data_plot), "\\..*$") #labCol=column_names; vector of the names to be ploted for each column in heatmap
+
+#only for dendograms add the folowing arguments to create sep horizontal lines in heatmap; #line/break after columns/row number in vector
+## rows
+
+row_sep <- table(hclust_rows$Cluster_rows)
+
+## columns
+ind_c <- match(labels(hclust_columns$Colv_arg), colnames(hclust_data))
+col_sep <- table(hclust_columns$Cluster_columns)[match(unique(hclust_columns$Cluster_columns[ind_c]),
+           names(table(hclust_columns$Cluster_columns)))]
+
+rowsep_arg <- sep_calc(row_sep)
+colsep_arg <- sep_calc(col_sep)
+
+
+########
+length(hclust_rows$RowSideColors_arg)
+dim(data_plot)
+names(data_plot)
+
+table(hclust_rows$RowSideColors_arg)
+
+
+
+
+```
+
+
+##-- Plot heatmap dendogram rows and columns 
+```{r eval=FALSE}
+# pdf(paste0(Path_to_plot, Title_plot,"_dend_TF", ".pdf"))
+# par(cex.main=1) #controls the size of the title
+#data_heatmap <- 
+                heatmap.2(as.matrix(data_plot),
+                          Rowv = hclust_rows$Rowv_arg,
+                          #Rowv = FALSE,
+                          Colv = hclust_columns$Colv_arg,
+                          dendrogram = 'column',
+                          #dendrogram = 'both',
+                          scale = "column",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(-2, 2,length.out=101), 
+                          trace = 'none',         
+                          labRow=NA,  
+                          labCol=NA,
+                          main=Title_plot,
+                          RowSideColors = hclust_rows$RowSideColors_arg, 
+                          ColSideColors = hclust_columns$ColSideColors_arg, 
+                          key=TRUE,
+                          density.info = "none",  #remove the hist from key
+                          lhei = c(2, 8), # this makes the colour-key legend a little thinner,
+                          sepwidth=c(0.05,0.05),
+                          sepcolor="white",
+                          # colsep = colsep_arg,
+                          # rowsep = rowsep_arg,
+                          # the margins command sets the width of the white space around the plot. 
+                          #The first element is the bottom margin and the second is the right margin
+                          margins = c(12, 2)
+)
+#dev.off()
+
+
+
+heatmap.2(as.matrix(data_plot),
+                          Rowv = hclust_rows$Rowv_arg,
+                          Colv = hclust_columns$Colv_arg,
+                          dendrogram = 'both',
+                          #scale = "column",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(0, 100,length.out=101), 
+                          trace = 'none',         
+                          labRow=NA,  
+                          labCol=NA,
+                          main=Title_plot,
+                          RowSideColors = hclust_rows$RowSideColors_arg, 
+                          ColSideColors = hclust_columns$ColSideColors_arg, 
+                          key=TRUE,
+                          density.info = "none",  #remove the hist from key
+                          #lhei = c(2, 8), # this makes the colour-key legend a little thinner,
+                          sepwidth=c(0.05,0.05),
+                          sepcolor="white",
+                          # colsep = colsep_arg,
+                          # rowsep = rowsep_arg,
+                          # the margins command sets the width of the white space around the plot. 
+                          #The first element is the bottom margin and the second is the right margin
+                         # margins = c(12, 2)
+)
+
+
+```
+
+
+```{r}
+
+data_matrix$cluster <- hclust_rows$Cluster_rows[1:10]
+data_plot_reordered <-  bind_rows(data_matrix, hclust_columns$Cluster_columns)
+
+length(hclust_rows$Cluster_rows)
+all(row.names(hclust_data)==names(hclust_rows$Cluster_rows))
+
+
+hclust_data_claster_reordered_v1 <- 
+  data_matrix %>% 
+  mutate(cluster = hclust_rows$Cluster_rows) %>% 
+   bind_rows(. , hclust_columns$Cluster_columns)
+
+
+# %>% 
+#   select(order.dendrogram(hclust_rows$Rowv_arg), cluster)
+
+hclust_data_claster_reordered[,870:873]
+hclust_data[,870:872]
+
+hclust_data_claster_reordered_v1[870:873,]
+hclust_data_claster_reordered_v1[873,1] <- "cluster_col"
+
+hclust_data_claster_reordered_v1[,c(1,874)]
+hclust_data_claster_reordered_v1[order.dendrogram(hclust_rows$Rowv_arg), order.dendrogram(hclust_columns$Colv_arg)]
+length(order.dendrogram(hclust_rows$Rowv_arg))
+length(order.dendrogram(hclust_columns$Colv_arg))
+
+```
+
+
+
+
+```{r}
+Cluster_rows <- as.data.frame(list(hclust_rows$Cluster_rows), col.names = c("cluster_rows")) %>% rownames_to_column(., var = "motif_1")
+Cluster_col <- as.data.frame(list(hclust_columns$Cluster_columns), col.names = c("cluster_col")) %>% rownames_to_column(., var = "motif_2")
+
+hclust_data_claster_reordered <- 
+  data_matrix %>% 
+  gather( "motif_2", "pct", -motif_1) %>% 
+  full_join(., Cluster_rows, by = "motif_1") %>% 
+  full_join(., Cluster_col, by = "motif_2")
+
+test <- hclust_data_claster_reordered %>% # filter(cluster_rows == 1) %>% 
+  group_by(cluster_rows, cluster_col) %>% 
+  summarise(mean = mean(pct)) 
+
+hclust_data_claster_reordered %>% 
+  filter(cluster_rows == 20, cluster_col == 20) %>% arrange(pct)
+
+```
+
+
+
+
+```{r}
+kmeans_rows <- kmeans(hclust_data, 40)
+kmeans_cols <- kmeans(t(hclust_data), 40)
+
+# names(sort(kmeans_rows$cluster[1:100])) 
+
+# base::match(names(order(kmeans_rows$cluster)),colnames(hclust_data) )
+# kmeans_cols$cluster
+
+# hclust_data[kmeans_rows$cluster, kmeans_cols$cluster]
+#test_2[order.dendrogram(hclust_rows$Rowv_arg), order.dendrogram(hclust_columns$Colv_arg)]
+
+heatmap(as.matrix(hclust_data[order(kmeans_rows$cluster), order(kmeans_cols$cluster)]),
+                          Rowv = kmeans_rows$cluster,
+                          Colv = kmeans_cols$cluster,
+                          #scale = "column",
+                          col = colorRampPalette(c("blue","white", "red"))(n = 100),
+                          breaks=seq(-3,3,length.out=101),      
+                          labRow=NA,  
+                          labCol=NA,
+                          main=Title_plot,
+                          #RowSideColors = brewer_par[clust_data$cluster], 
+                          #ColSideColors = hclust_columns$ColSideColors_arg
+)
+```
+
+```{r}
+hclust_data[kmeans_rows$cluster, kmeans_cols$cluster][870:872,870:872]
+```
+
+
+
+

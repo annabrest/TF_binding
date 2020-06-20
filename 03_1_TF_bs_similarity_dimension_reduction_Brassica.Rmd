@@ -1,0 +1,336 @@
+---
+title: "Analysis of TF binding site similarity in Brassica"
+output: html_notebook
+---
+
+Aim: To compare predicted binding sites of TFs and find % of binding sites overlap by 4 or more base pairs
+data_input: for Arabidopsis: analysed_data/TF_rc_scan_results_promoters1500_TF_family.csv
+            for Brassica: Brapa_3/analysed_data/TF_rc_scan_results_Brapa3_promoters1500_TF_family.csv
+ 
+
+# load packages:
+```{r}
+pkgs <-  c('here', 'tidyverse','RColorBrewer','gplots',
+          'randomForest', 'broom', 'gridExtra',
+          'rtracklayer', 'Biostrings', 'GenomicRanges',
+          'ggpubr', 'BSgenome')
+
+lapply(pkgs, library, character.only = TRUE)
+rm(pkgs)
+
+```
+
+
+# load data = the results of predicted TF's binding sites in 1500 bp promoters in *Brassica*
+```{r}
+TF_scan <- read_csv("../TF_binding/Brapa_TF/Brapa_3/analysed_data/TF_rc_scan_results_Brapa3_promoters1500_TF_family.csv")
+                    
+```
+
+# Update "start" and "stop" coordinates for "-" strand to be always start < stop
+```{r}
+TF_scan_updated <- 
+TF_scan %>% 
+  mutate(start_updated = if_else(strand == "-", stop, start), stop_updated = if_else(strand == "-", start, stop)) 
+
+# Create list of all TF; Consider to sort next time
+TF_list <- sort(unique(TF_scan$motif))
+
+# Calculate total number of binding site for each TF; order as TF_list 
+N_TF_bs <- TF_scan %>% 
+  count(motif)
+
+rm(TF_scan)
+
+
+```
+
+# In order to find overlaps in TF binding sites use GRanges
+# Create GRanges obgect; use ID number instead of "chromosome names" as seqnames to use later to find overlaps
+```{r}
+Brapa_gr <- GRanges(seqnames = Rle(TF_scan_updated$sequence),
+              ranges = IRanges(TF_scan_updated$start_updated, end = TF_scan_updated$stop_updated),
+               strand = Rle(strand(TF_scan_updated$strand)), select(TF_scan_updated, -starts_with("stop"), -starts_with("start"), -strand ))
+Brapa_gr
+```
+
+#--Write function *Overlap_TF_bs* to calculate number of binding sites overlapping in two TFs (pairwised). The output will include more info, like the number of TF binding sites having overlap (not the same as tot N of overlaps), number of overlaps
+```{r}
+
+Overlap_TF_bs <- function(n,m){
+  TF1 <- TF_list[n]
+  TF2 <- TF_list[m]
+  
+  Brapa_gr_TF1 <- 
+  Brapa_gr[mcols(Brapa_gr)$motif == TF1]
+
+Brapa_gr_TF2 <- 
+  Brapa_gr[mcols(Brapa_gr)$motif == TF2]
+
+Overlap_TF <- findOverlaps(Brapa_gr_TF1, Brapa_gr_TF2, minoverlap=4L, type = "any")
+
+message(paste(n,m))
+
+return(
+data.frame("motif_1" = TF1, "motif_2" = TF2, 
+           "overlap" = length(queryHits(Overlap_TF)), 
+            "overlap_TF_1" = length(unique(queryHits(Overlap_TF))),
+              "overlap_TF_2" = length(unique(subjectHits(Overlap_TF))),
+                "tot_TF1" = nLnode(Overlap_TF),
+                 "tot_TF2" = nRnode(Overlap_TF), 
+                   stringsAsFactors = FALSE)
+      )
+}
+
+Overlap_TF_bs(8,9)
+
+```
+
+
+
+
+###-- Run *Overlap_TF_bs* on parts of the TF_list
+
+```{r}
+library(parallel)
+library(MASS)
+numCores <- detectCores()
+numCores
+
+n = length(TF_list)
+
+x <- Sys.time()
+# last run 600:(n-1)
+
+Results_1_300 <- mclapply(seq_along(TF_list[1:300]), function(y)(
+                            lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+), mc.cores = 4
+
+)
+
+
+Sys.time()-x 
+
+#Time difference of 5.841681 hours
+
+Results_1_300_df <- do.call(bind_rows, Results_1_300)
+
+write_csv(Results_1_300_df, "output_data/02_1_TF_bs_similarity_dimension_reduction_Brassica/Brapa_Results_1_300.csv")
+
+
+x <- Sys.time()
+# last run 600:(n-1)
+
+Results_301_871_v2 <- mclapply(seq(301,871), function(y)(
+                            lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+), mc.cores = 4
+
+)
+
+Sys.time()-x 
+
+Results_301_871_df <- do.call(bind_rows, Results_301_871)
+
+
+# Warning message:
+# In mclapply(seq(301, 871), function(y) (lapply(seq(y + 1, n), function(x) Overlap_TF_bs(n = y,  :
+#   scheduled cores 3 encountered errors in user code, all values of the jobs will be affected
+# > 
+# > Sys.time()-x 
+# Time difference of 4.590073 hours
+
+x <- Sys.time()
+
+
+Results_301_600 <- lapply(seq(301,600), function(y)(
+                            lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+), mc.cores = 4
+
+)
+
+Sys.time()-x 
+
+Results_301_600_df <- do.call(bind_rows, Results_301_600)
+
+write_csv(Results_301_600_df, "output_data/02_1_TF_bs_similarity_dimension_reduction_Brassica/Brapa_Results_301_600.csv")
+
+# Sys.time()-x 
+# Time difference of 3.661756 hours
+
+n = length(TF_list)
+x <- Sys.time()
+
+
+Results_601_871_1 <- lapply(seq(601,871), function(y)(
+                            lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+Sys.time()-x 
+
+# Sys.time()-x 
+# Time difference of 1.113009 hours
+Results_601_871_df <- do.call(bind_rows, Results_601_871)
+
+write_csv(Results_601_871_df, "output_data/02_1_TF_bs_similarity_dimension_reduction_Brassica/Brapa_Results_601_871.csv")
+# ###############
+# # Time difference of 22.05661 secs
+# # Time difference of 20.13781 secs
+# ###############
+# #n = length(TF_list)
+# 
+# x <- Sys.time()
+# # last run 600:(n-1)
+# 
+# Results_1_3_v1 <- lapply(seq_along(TF_list[1:3]), function(y)(
+#                             lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+# )
+# 
+# )
+# 
+# 
+# Sys.time()-x 
+# # Time difference of 47.56093 secs
+
+lapply(seq(870,871), function(y)(
+                            lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+Results_1_300_df %>% 
+  group_by(motif_1) %>% 
+  count()
+```
+n =50,3
+# Time difference of 22.05661 secs -8 cores
+# Time difference of 20.13781 secs -4 cores
+# Time difference of 47.56093 secs - no parallel
+
+```{r cache=TRUE, include=FALSE, results='hide'}
+# Overlap_TF_bs_test <- function(n,m){
+#   TF1 <- TF_list[n]
+#   TF2 <- TF_list[m]
+#   
+# #   Ara_gr_TF1 <- 
+# #   Ara_gr[mcols(Ara_gr)$motif == TF1]
+# # 
+# # Ara_gr_TF2 <- 
+# #   Ara_gr[mcols(Ara_gr)$motif == TF2]
+# 
+# # Overlap_TF <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+# 
+# message(paste(n,m))
+# 
+# return(
+# data.frame("motif_1" = TF1, "motif_2" = TF2,
+#            "n_m" = paste(n,m), stringsAsFactors = FALSE)
+#       )
+# }
+# 
+# #########
+# Overlap_TF_bs_test(8,9)
+# 
+# #n = length(TF_list)
+# n=200
+# x <- Sys.time()
+# 
+# Results_all_test <- mclapply(seq_along(TF_list[1:(n-1)]), function(y)(
+#   lapply(seq(y+1,n), function(x)Overlap_TF_bs_test(n=y, m=x))
+# ), mc.cores = numCores
+# 
+# )
+# Sys.time()-x 
+
+# ##########
+# 
+# 
+# n=200
+# x <- Sys.time()
+# 
+# Results_all_test_1 <- lapply(seq_along(TF_list[1:(n-1)]), function(y)(
+#   lapply(seq(y+1,n), function(x)Overlap_TF_bs_test(n=y, m=x))
+# )
+# 
+# )
+# 
+# Sys.time()-x 
+# 
+
+```
+Time difference of 4.410801 secs
+Time difference of 4.967852 secs
+Time difference of 13.73506 secs
+
+
+
+##--Test that all TFs have been compared properly
+```{r cache=TRUE, include=FALSE, results='hide'}
+Overlap_TF_bs_test <- function(n,m){
+  TF1 <- TF_list[n]
+  TF2 <- TF_list[m]
+  
+#   Ara_gr_TF1 <- 
+#   Ara_gr[mcols(Ara_gr)$motif == TF1]
+# 
+# Ara_gr_TF2 <- 
+#   Ara_gr[mcols(Ara_gr)$motif == TF2]
+
+# Overlap_TF <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+
+message(paste(n,m))
+
+return(
+data.frame("motif_1" = TF1, "motif_2" = TF2,
+           "n_m" = paste(n,m), stringsAsFactors = FALSE)
+      )
+}
+
+#########
+Overlap_TF_bs_test(870,871)
+
+
+x <- Sys.time()
+
+
+Results_601_871_test <- lapply(seq(601,871), function(y)(
+                            lapply(seq(y+1,n), function(x)Overlap_TF_bs_test(n=y, m=x))
+)
+
+)
+
+Sys.time()-x 
+
+##########
+n = length(TF_list)
+x <- Sys.time()
+
+Results_all_test <- lapply(seq_along(TF_list[1:(n-1)]), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs_test(n=y, m=x))
+)
+
+)
+
+Sys.time()-x 
+
+Overlap_TF_bs(871,872)
+TF_list[871]
+TF_list[872]
+```
+
+
+#############
+```{r}
+Brapa_gr_TF1 <- 
+ Brapa_gr[mcols(Brapa_gr)$motif == TF_list[8]]
+
+Brapa_gr_TF2 <- 
+  Brapa_gr[mcols(Brapa_gr)$motif == TF_list[9]]
+
+findOverlaps(Brapa_gr_TF1, minoverlap=4L, type = "any")
+length(unique(subjectHits(findOverlaps(Brapa_gr_TF1, minoverlap=4L))))
+nLnode(findOverlaps(Brapa_gr_TF1, minoverlap=4L))
+
+
+```
+

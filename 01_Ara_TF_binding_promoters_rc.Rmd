@@ -1,0 +1,80 @@
+---
+title: "Identification of TF binding sites based on PWM, using Biocondauctor/universalmotif"
+output: html_document
+---
+TF binding site prediction with reverse complement in Arabidopsis
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(TFBSTools)
+library(universalmotif)
+library(rtracklayer)
+library(Biostrings)
+library(tidyverse)
+library(GenomicRanges)
+```
+
+
+
+Use "promoters1500" created in "TF_binding_promoters.Rmd" for folowing analysis 
+
+```{r eval=FALSE}
+
+promoters1500 <- readDNAStringSet("~/Work/2019/Analysis/TF_binding/analysed_data/promoters1500_sequence_gene_names.fasta")
+
+#create list of files
+meme_files <- list.files(pattern=".txt$", full.names = T, recursive=TRUE)
+#upload into r
+all_meme_data <- lapply(meme_files, function(x) read_meme(x))
+
+all_results_scan <- data.frame()
+for (i in 1:length(all_meme_data)) {
+  
+all_results_scan <- rbind(all_results_scan, scan_sequences(all_meme_data[i], promoters1500, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds", RC = TRUE))
+message(paste(as.character(i), "done"))
+}
+
+```
+
+```{r}
+# test <- lapply(all_meme_data[1:2], function (x)rbind(all_results_scan, scan_sequences(all_meme_data[[x]], promoters1500, verbose = 1, progress = FALSE, threshold = 0.6, threshold.type = "logodds", RC = TRUE)))
+# class(all_meme_data[[1]])
+```
+
+# meme_files # containes 2 PWMs more than should be
+# meme_files contained 2 additonal files: "./meme_m1_2.txt", "./meme_m1.txt" , what shouldn't be there.
+# it created duplicated data for PWMs containd in these files: [1] "ABI3VP1_tnt.AT5G18090_col_a_m1" "ABI3VP1_tnt.AT5G25475_col_a_m1"
+```{r eval=FALSE}
+#
+# "ABI3VP1_tnt.AT5G18090_col_a_m1"
+# "ABI3VP1_tnt.AT5G25475_col_a_m1"
+# remove duplicated rows:
+all_results_scan_deduplicated <- all_results_scan %>% 
+  distinct() 
+
+# # test deduplication:
+# test_duplic <- all_results_scan[duplicated(all_results_scan),]
+# unique(test_duplic$motif)
+# test <- all_results_scan_deduplicated[duplicated(all_results_scan_deduplicated),]
+# unique(test$motif)
+# test_deduplic <- all_results_scan[!duplicated(all_results_scan),]
+# unique(test_deduplic$motif)
+
+# Add column with family name
+all_results_scan_TF_family <- all_results_scan_deduplicated %>%  mutate(TF_family = str_remove(motif, "\\..*$"))
+
+head(all_results_scan_TF_family)
+
+```
+# Updated DATA; NO REPLICATES
+
+```{r}
+#write_csv(unique(all_results_scan), "analysed_data/TF_rc_scan_results_promoters1500_v1.csv")
+write_csv(unique(all_results_scan_deduplicated), "analysed_data/TF_rc_scan_results_promoters1500.csv")
+write_csv(unique(all_results_scan_TF_family), "analysed_data/TF_rc_scan_results_promoters1500_TF_family.csv" )
+```
+
+############################--------The end----######
+

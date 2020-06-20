@@ -1,0 +1,160 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load packages:
+```{r}
+source("scripts/pkgs.R")
+```
+
+# load data = the results of predicted TF's binding sites in 1500 bp promoters in Arabidopsis
+```{r}
+TF_scan <- read_csv("analysed_data/TF_rc_scan_results_promoters1500_TF_family.csv")
+```
+
+# Update "start" and "stop" coordinates for "-" strand to be always start < stop
+```{r}
+TF_scan_updated <- 
+TF_scan %>% 
+  mutate(start_updated = if_else(strand == "-", stop, start), stop_updated = if_else(strand == "-", start, stop)) 
+
+# Create list of all TF; Consider to sort next time
+TF_list <- sort(unique(TF_scan$motif))
+
+# Calculate total number of binding site for each TF; order as TF_list 
+N_TF_bs <- TF_scan %>% 
+  count(motif)
+```
+
+# In order to find overlaps in TF binding sites use GRanges
+# Create GRanges obgect; use ID number instead of "chromosome names" as seqnames to use later to find overlaps
+```{r}
+Ara_gr <- GRanges(seqnames = Rle(TF_scan_updated$sequence),
+              ranges = IRanges(TF_scan_updated$start_updated, end = TF_scan_updated$stop_updated),
+               strand = Rle(strand(TF_scan_updated$strand)), select(TF_scan_updated, -starts_with("stop"), -starts_with("start"), -strand ))
+Ara_gr
+```
+
+
+# Quick test of consept for finding "overlaps"
+```{r}
+Ara_gr_TF1 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF_list[1]]
+
+Ara_gr_TF2 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF_list[2]]
+
+findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+queryHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")) #TF1
+subjectHits(findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")) #TF2
+countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+sum(countOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any"))
+
+test_1 <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+nLnode(test_1)
+nRnode(test_1)
+
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+Overlap_TF_bs <- function(n,m){
+  TF1 <- TF_list[n]
+  TF2 <- TF_list[m]
+  
+  Ara_gr_TF1 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF1]
+
+Ara_gr_TF2 <- 
+  Ara_gr[mcols(Ara_gr)$motif == TF2]
+
+Overlap_TF <- findOverlaps(Ara_gr_TF1, Ara_gr_TF2, minoverlap=4L, type = "any")
+
+message(paste(n,m))
+
+return(
+data.frame("motif_1" = TF1, "motif_2" = TF2, 
+           "overlap" = length(queryHits(Overlap_TF)), 
+            "overlap_TF_1" = length(unique(queryHits(Overlap_TF))),
+              "overlap_TF_2" = length(unique(subjectHits(Overlap_TF))),
+                "tot_TF1" = nLnode(Overlap_TF),
+                 "tot_TF2" = nRnode(Overlap_TF), 
+                   stringsAsFactors = FALSE)
+      )
+}
+
+Overlap_TF_bs(8,9)
+###########
+
+n = length(TF_list)
+#n = 50
+x <- Sys.time()
+
+Results <- lapply(seq_along(TF_list[1:(n-1)]), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x 
+
+Results_df <- do.call(bind_rows, Results)
+Results_df <- Results_df %>% 
+  mutate( pct_overlap_TF1 = round(overlap_TF_1/tot_TF1,2 ),
+                   pct_overlap_TF2 = round(overlap_TF_2/tot_TF2, 2)) %>% 
+ arrange(desc(pct_overlap_TF1, pct_overlap_TF2))
+
+
+```
+
+
+```{r warning=FALSE, include=FALSE}
+
+n = length(TF_list)
+
+x <- Sys.time()
+# last run 600:(n-1)
+
+Results_1_300 <- lapply(seq_along(TF_list[1:300]), function(y)(
+  lapply(seq(y+1,n), function(x)Overlap_TF_bs(n=y, m=x))
+)
+
+)
+
+
+Sys.time()-x 
+
+Results_df <- do.call(bind_rows, Results_1_300)
+Results_df <- Results_df %>% 
+  mutate( pct_overlap_TF1 = round(overlap_TF_1/tot_TF1,2 ),
+                   pct_overlap_TF2 = round(overlap_TF_2/tot_TF2, 2)) %>% 
+ arrange(desc(pct_overlap_TF1, pct_overlap_TF2))
+
+
+write_csv(Results_df, "output_data/Results_1_300.csv")
+
+```
+
+
+```{r}
+saveRDS(file = here(paste0("output_data","Results_1_300",".rda")) , Results_1_300)
+```
+
+```{r}
+# read_rds("output_data/output_dataResults_701.rda") #Stack computer
+```
+
+
+

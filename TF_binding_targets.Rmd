@@ -2,6 +2,10 @@
 title: "TF_binding_targets"
 output: html_document
 ---
+*Sanity check*
+Investigate why 1/4 of Variable genes was filtered out form the promoters list
+too short?
+genes too close together?
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -11,9 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 
 ```
-Investigate why 1/4 of Varoiable genes was filtered out form the promoters list
-too short?
-genes too close together?
+
 
 ```{r}
 all_results_scan <- read_csv("analysed_data/TF_scan_results_v1.csv")
